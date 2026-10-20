@@ -56,14 +56,14 @@ describe("title matching for Cinemeta/Kitsu lookups", () => {
     for (const t of ["Tanaka-kun wa Itsumo Kedaruge Specials", "One Piece Especiales", "One Piece - Wano Especial", "Shingeki no Kyojin OVA's Latino"]) assert.ok(matching.IsSpecial(t), t)
     for (const t of ["Tanaka-kun wa Itsumo Kedaruge", "Spy x Family"]) assert.ok(!matching.IsSpecial(t), t)
   })
-  it("matches Henaojara entries only for the same show and season", () => {
-    const same = (a, b) => matching.NormalizeHenaojaraTitle(a) === matching.NormalizeHenaojaraTitle(b)
-    assert.ok(same("Spy x Family 1080p", "Spy x Family"))
-    assert.ok(same("Spy x Family Season 2", "Spy x Family 2"))
-    assert.ok(same("Shingeki no Kyojin Castellano", "Shingeki no Kyojin"))
-    assert.ok(!same("Spy x Family Season 2", "Spy x Family"))
-    assert.ok(!same("One Piece Stampede", "ONE PIECE"))
-    assert.ok(!same("One Piece: Heart of Gold", "ONE PIECE"))
+  it("keeps only entries that can be the requested season (Henaojara lists each season separately)", () => {
+    assert.ok(matching.SameSeason("Spy x Family", "1"))
+    assert.ok(matching.SameSeason("Spy x Family 1080p", undefined))
+    assert.ok(matching.SameSeason("Spy x Family Season 2", "2"))
+    assert.ok(!matching.SameSeason("Spy x Family Season 2", "1"))
+    assert.ok(!matching.SameSeason("Spy x Family Part 2", undefined))
+    assert.ok(!matching.SameSeason("Shingeki no Kyojin 3 Parte 2 Castellano", "3"))
+    assert.ok(matching.SameSeason("Shingeki no Kyojin Temporada 3", "3"))
   })
   it("tries each search term until one succeeds", async () => {
     const tried = []
@@ -163,5 +163,37 @@ describe("GetStreamLinks episode names", () => {
   it("omits the number when there isn't one", async () => {
     assert.match((await linksFor(undefined))[0].description, /^Show\n/)
     assert.match((await linksFor(NaN))[0].description, /^Show\n/)
+  })
+})
+
+describe("search catalogs paging", () => {
+  //JKAnime and LatAnime return every match on one page: page 2 must be empty, not page 1 again (Stremio keeps asking)
+  for (const [file, fn] of [["../routes/jkanime.js", "SearchJKAnime"], ["../routes/latanime.js", "SearchLatAnime"]]) {
+    it(`${fn} returns nothing past the first page of a text search`, async () => {
+      const realFetch = globalThis.fetch
+      globalThis.fetch = async () => { throw Error("should not fetch") }
+      try { assert.deepEqual(await require(file)[fn]("naruto", undefined, undefined, undefined, 2), []) } finally { globalThis.fetch = realFetch }
+    })
+  }
+})
+
+describe("JKAnime next episode date", () => {
+  const { NextAiringDate } = require("../routes/jkanime.js")
+  it("reads any Spanish month and picks the upcoming year", () => {
+    const now = new Date()
+    for (const [text, month] of [["Martes 27 de Octubre", 9], ["Lunes 5 de Enero", 0], ["Viernes 14 de Septiembre", 8]]) {
+      const date = NextAiringDate(text)
+      assert.equal(date.getMonth(), month, text)
+      assert.ok(date > now - 8 * 86400000, `${text} is in the past: ${date}`)
+    }
+  })
+  it("reads it from the page's paragraph, which also mentions the last episode", () => {
+    const date = NextAiringDate("Último episodio: Chitose-kun wa Ramune Bin no Naka Part 2 - 2 NuevoMartes 27 Octubre")
+    assert.equal(date.getMonth(), 9)
+    assert.equal(date.getDate(), 27)
+  })
+  it("returns nothing when it can't read the date", () => {
+    assert.equal(NextAiringDate(undefined), undefined)
+    assert.equal(NextAiringDate("Próximamente"), undefined)
   })
 })
